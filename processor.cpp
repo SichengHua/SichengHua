@@ -34,27 +34,24 @@ void CycleExecution(Processor *m_Processor, string machineCode)
 
     decode(m_Processor);
     m_Processor->cycles++;
-    
-    if(m_Processor->instructionClass == undefined)
-        assert(("instructionClass undefined", false));
-    
+
     execute(m_Processor);
     m_Processor->cycles++;
 
-    if(m_Processor->instructionClass == loadWord | m_Processor->instructionClass == storeWord)
+    if(m_Processor->instructionClass == loadWord || m_Processor->instructionClass == storeWord)
     {
-    memoryAccess(m_Processor);
-    m_Processor->cycles++;
+        memoryAccess(m_Processor);
+        m_Processor->cycles++;
     }
 
-    bool RegWrite= m_Processor->controlSignal[7];
-    m_Processor->isWriteBack = RegWrite ? true : false; 
+    m_Processor->isWriteBack = m_Processor->controlSignal[7];
 
-    if(m_Processor->instructionClass == rType | m_Processor->instructionClass == loadWord | m_Processor->instructionClass == addi)
+    if(m_Processor->instructionClass == rType || m_Processor->instructionClass == loadWord || m_Processor->instructionClass == addi)
     {
-    writeBack(m_Processor);
-    m_Processor->cycles++;
+        writeBack(m_Processor);
+        m_Processor->cycles++;
     }
+
 }
 
 
@@ -166,29 +163,17 @@ void decode(Processor *m_Processor)
 
 }
 
-void execute(Processor *m_Processor)
-{
-    if(m_Processor->instructionClass==jump)
-    {
-        int jumpResult=0;
-        jumpResult = m_Processor->address * 4;
-        m_Processor->programCounter = jumpResult; 
-    }
-    else if(m_Processor->instructionClass==nop)
-    {
-        m_Processor->programCounter = m_Processor->programCounter+4;
-    }
-    else
-    {
+void execute(Processor *m_Processor) {
+    if (m_Processor->instructionClass == jump) {
+        m_Processor->programCounter = m_Processor->address * 4;
+    } else if (m_Processor->instructionClass != nop) {
         registerInit(m_Processor);
         ALUInit(m_Processor);
         unsigned int tempProgramCounter = m_Processor->programCounter + 4;
-        bool branch = m_Processor->controlSignal[2];
-    
-        bool AluZero = m_Processor->m_ALUUnit.zero;
-        int AddResult=0;
-        AddResult = tempProgramCounter + (SignExtensionInit(m_Processor->imm) << 2);
-        m_Processor->programCounter = (branch && AluZero) ? AddResult : tempProgramCounter;
+        int AddResult = tempProgramCounter + (SignExtensionInit(m_Processor->imm) << 2);
+        m_Processor->programCounter = m_Processor->controlSignal[2] && m_Processor->m_ALUUnit.zero ? AddResult : tempProgramCounter;
+    } else {
+        m_Processor->programCounter += 4;
     }
 }
 
@@ -207,35 +192,30 @@ int SignExtensionInit(unsigned int bit16)
     return (int)(bit16 << 16) >> 16;
 }
 
-void registerInit(Processor *m_Processor)
-{
+void registerInit(Processor *m_Processor) {
     bool RegDst = m_Processor->controlSignal[0];
     bool MemtoReg = m_Processor->controlSignal[4];
     bool RegWrite = m_Processor->controlSignal[7];
     bool isWriteBack = m_Processor->isWriteBack;
     unsigned int readRegister1 = m_Processor->registerAddress[0]; //rs
     unsigned int readRegister2 = m_Processor->registerAddress[1]; //rt
-    //mux for instruction[20-16] and instruction[15-11]
     unsigned int writeRegister = RegDst ? m_Processor->registerAddress[2] : m_Processor->registerAddress[1];
-    //mux for ALU result and Read data from memory
-    unsigned int writeData = MemtoReg ? m_Processor->m_DataMemoryUnit.ReadData : (unsigned int) m_Processor->m_ALUUnit.result;
-
     unsigned int readData1 = m_Processor->registers[readRegister1];
     unsigned int readData2 = m_Processor->registers[readRegister2];
+    unsigned int writeData = MemtoReg ? m_Processor->m_DataMemoryUnit.ReadData : (unsigned int) m_Processor->m_ALUUnit.result;
 
-    if(isWriteBack && RegWrite)
-    {
+    m_Processor->m_RegisterUnit = RegisterUnit{
+        .readRegister1 = readRegister1,
+        .readRegister2 = readRegister2,
+        .readData1 = readData1,
+        .readData2 = readData2,
+        .writeRegister = writeRegister,
+        .writeData = writeData
+    };
+
+    if (isWriteBack && RegWrite) {
         m_Processor->registers[writeRegister] = writeData;
     }
-
-    m_Processor->m_RegisterUnit.readRegister1 = readRegister1;
-    m_Processor->m_RegisterUnit.readRegister2 = readRegister2;
-    m_Processor->m_RegisterUnit.readData1 = readData1;
-    m_Processor->m_RegisterUnit.readData2 = readData2;
-    m_Processor->m_RegisterUnit.writeRegister = writeRegister;
-    m_Processor->m_RegisterUnit.writeData = writeData;
-
-    // cout << "-------------------------" << endl;
 }
 
 void ALUInit(Processor *m_Processor)
@@ -296,27 +276,25 @@ void ALUInit(Processor *m_Processor)
     m_Processor->m_ALUUnit.result = result;
 }
 
-void DataMemoryInit(Processor *m_Processor)
-{
+void DataMemoryInit(Processor *m_Processor) {
     unsigned int address = m_Processor->m_ALUUnit.result;
     unsigned int writeData = m_Processor->m_RegisterUnit.readData2;
-    unsigned int ReadData=0;
+    unsigned int ReadData = 0;
     bool MemWrite = m_Processor->controlSignal[5];
-    bool MemRead  = m_Processor->controlSignal[3];
-    if(MemWrite)
-    {
+    bool MemRead = m_Processor->controlSignal[3];
+
+    if (MemWrite) {
         m_Processor->m_DataMemoryUnit.memoryAddress.push_back(address);
         m_Processor->m_DataMemoryUnit.memoryData.push_back(writeData);
     }
-    else if(MemRead)
-    {
-        for(int i =0; i<m_Processor->m_DataMemoryUnit.memoryAddress.size();i++) {
-            if(m_Processor->m_DataMemoryUnit.memoryAddress[i] == address)
-            {
-                ReadData = m_Processor->m_DataMemoryUnit.memoryData[i];            
+    else if (MemRead) {
+        for (int i = 0; i < m_Processor->m_DataMemoryUnit.memoryAddress.size(); i++) {
+            if (m_Processor->m_DataMemoryUnit.memoryAddress[i] == address) {
+                ReadData = m_Processor->m_DataMemoryUnit.memoryData[i];
             }
         }
     }
+
     m_Processor->m_DataMemoryUnit.ReadData = ReadData;
 }
 
